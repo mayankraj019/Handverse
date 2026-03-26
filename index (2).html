@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>Ahsan's Gesture Scanner</title>
+    <title>Mayank's Gesture Scanner</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/face_mesh.js"></script>
@@ -214,13 +214,13 @@
                 // Global Easter Egg Override
                 if (gesture.type === 'middle') {
                     document.getElementById('scanner-ui').style.display = 'block';
-                    document.getElementById('display').innerText = "Dont do it Ahsan😢";
+                    document.getElementById('display').innerText = "Dont do it Mayank";
                     document.getElementById('status').innerText = "EMOTIONAL DAMAGE";
                 }
 
                 if (gesture.type === 'fist') {
                     document.getElementById('scanner-ui').style.display = 'block';
-                    document.getElementById('display').innerHTML = "<span class='signature'>made by ahsan</span>";
+                    document.getElementById('display').innerHTML = "<span class='signature'>made by mayank</span>";
                     document.getElementById('status').innerText = "OWNER DETECTED";
                 }
 
