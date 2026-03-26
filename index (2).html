@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Ahsan's Gesture Scanner</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/face_mesh.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <style>
+        body {
+            margin: 0;
+            background: #000;
+            overflow: hidden;
+            font-family: 'Outfit', sans-serif;
+            color: white;
+        }
+
+        #mode-selector {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            z-index: 100;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 10px 20px;
+            border-radius: 50px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .mode-btn {
+            background: transparent;
+            border: none;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            cursor: pointer;
+            padding: 8px 20px;
+            border-radius: 20px;
+            transition: 0.3s;
+        }
+
+        .mode-btn.active {
+            background: #fff;
+            color: #000;
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+        }
+
+        #scanner-ui {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .label {
+            color: #0f0;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            margin-bottom: 10px;
+            opacity: 0.8;
+        }
+
+        .main-display {
+            font-size: 140px;
+            font-weight: 800;
+            color: white;
+            text-shadow: 0 0 30px rgba(255, 255, 255, 0.4);
+        }
+
+        .signature {
+            font-size: 40px;
+            color: #ff00ff;
+            text-shadow: 0 0 20px #ff00ff;
+            letter-spacing: 2px;
+        }
+
+        #game-ui {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            text-align: right;
+            z-index: 100;
+            font-family: 'Courier New', monospace;
+        }
+
+        #score {
+            font-size: 24px;
+            color: #0f0;
+            text-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+        }
+
+        #high-score {
+            font-size: 14px;
+            color: #fff;
+            opacity: 0.6;
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;800&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div id="mode-selector">
+        <button onclick="setMode('count')" id="btn-count" class="mode-btn active">Count</button>
+        <button onclick="setMode('hover')" id="btn-hover" class="mode-btn">Hover</button>
+        <button onclick="setMode('game')" id="btn-game" class="mode-btn">Game</button>
+        <button onclick="setMode('eye')" id="btn-eye" class="mode-btn">Eye</button>
+    </div>
+
+    <div id="scanner-ui">
+        <div id="status" class="label">System Ready</div>
+        <div id="display" class="main-display">---</div>
+    </div>
+
+    <div id="game-ui" style="display: none;">
+        <div id="score">Score: 0</div>
+        <div id="high-score">High: 0</div>
+    </div>
+
+    <script>
+        let currentMode = 'count';
+        let handLandmarks = null;
+        let faceLandmarks = null;
+        let particles = [];
+        const TOTAL_PARTICLES = 150;
+
+        // Eye Game State
+        let eyeTargets = [];
+        let eyeX = 0, eyeY = 0;
+        let eyeScore = 0;
+
+        // Game State
+        let gameActive = false;
+        let score = 0;
+        let highScore = 0;
+        let playerY = 0;
+        let obstacles = [];
+        
+        // MediaPipe Setup
+        const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.8, minTrackingConfidence: 0.8 });
+        hands.onResults(results => { handLandmarks = results.multiHandLandmarks[0]; });
+
+        const faceMesh = new FaceMesh({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${file}` });
+        faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        faceMesh.onResults(results => { 
+            faceLandmarks = results.multiFaceLandmarks ? results.multiFaceLandmarks[0] : null; 
+        });
+
+        const camera = new Camera(document.createElement('video'), {
+            onFrame: async () => { 
+                if (currentMode === 'eye') {
+                    await faceMesh.send({ image: camera.video });
+                } else {
+                    await hands.send({ image: camera.video });
+                }
+            },
+            width: 1280, height: 720
+        });
+        camera.start();
+
+        function setMode(mode) {
+            currentMode = mode;
+            document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(`btn-${mode}`).classList.add('active');
+
+            // UI visibility
+            document.getElementById('scanner-ui').style.display = (mode === 'count' || mode === 'hover') ? 'block' : 'none';
+            document.getElementById('game-ui').style.display = (mode === 'game' || mode === 'eye') ? 'block' : 'none';
+
+            if (mode === 'game') resetGame();
+            if (mode === 'eye') resetEyeGame();
+        }
+
+        function setup() {
+            createCanvas(windowWidth, windowHeight);
+            for (let i = 0; i < TOTAL_PARTICLES; i++) particles.push(new Particle(i));
+        }
+
+        function draw() {
+            background(0, 80);
+
+            if (handLandmarks) {
+                let gesture = analyzeHand(handLandmarks);
+
+                // Cursor position
+                let hx = (1 - handLandmarks[8].x) * width;
+                let hy = handLandmarks[8].y * height;
+
+                if (currentMode === 'count') {
+                    updateUI(gesture);
+                    drawParticles(hx, hy, gesture.type === 'fist');
+                } else if (currentMode === 'hover') {
+                    // Hide UI text in hover mode
+                    document.getElementById('scanner-ui').style.display = 'none';
+                    drawParticles(hx, hy, false);
+                    drawHoverWorld(hx, hy);
+                    drawBug(hx, hy);
+                } else if (currentMode === 'game') {
+                    runGame(hx, hy, gesture);
+                } else if (currentMode === 'eye') {
+                    runEyeGame();
+                }
+
+                // Global Easter Egg Override
+                if (gesture.type === 'middle') {
+                    document.getElementById('scanner-ui').style.display = 'block';
+                    document.getElementById('display').innerText = "Dont do it Ahsan😢";
+                    document.getElementById('status').innerText = "EMOTIONAL DAMAGE";
+                }
+
+                if (gesture.type === 'fist') {
+                    document.getElementById('scanner-ui').style.display = 'block';
+                    document.getElementById('display').innerHTML = "<span class='signature'>made by ahsan</span>";
+                    document.getElementById('status').innerText = "OWNER DETECTED";
+                }
+
+            } else {
+                if (currentMode !== 'game') {
+                    document.getElementById('display').innerText = "WAITING...";
+                }
+            }
+        }
+
+        function drawParticles(hx, hy, isFist) {
+            particles.forEach(p => {
+                p.follow(hx, hy);
+                p.update();
+                p.show(isFist);
+            });
+        }
+
+        function drawHoverWorld(hx, hy) {
+            // Interactive glowing circles
+            noFill();
+            stroke(255, 50);
+            ellipse(width / 4, height / 2, 100);
+            ellipse(width / 2, height / 2, 150);
+            ellipse(3 * width / 4, height / 2, 100);
+
+            let d1 = dist(hx, hy, width / 4, height / 2);
+            if (d1 < 50) { stroke(0, 255, 255); ellipse(width / 4, height / 2, 120); }
+
+            let d2 = dist(hx, hy, width / 2, height / 2);
+            if (d2 < 75) { stroke(255, 0, 255); ellipse(width / 2, height / 2, 180); }
+
+            let d3 = dist(hx, hy, 3 * width / 4, height / 2);
+            if (d3 < 50) { stroke(255, 255, 0); ellipse(3 * width / 4, height / 2, 120); }
+        }
+
+        function drawBug(x, y) {
+            push();
+            translate(x, y);
+
+            // Jitter for bug-like life
+            let jitterX = random(-2, 2);
+            let jitterY = random(-2, 2);
+            translate(jitterX, jitterY);
+
+            // Body
+            fill(20, 40, 20);
+            noStroke();
+            ellipse(0, 0, 15, 10);
+
+            // Wings (animating)
+            fill(255, 255, 255, 100);
+            let wingSpan = sin(frameCount * 0.5) * 15;
+            ellipse(-5, -5, wingSpan, 10);
+            ellipse(5, -5, wingSpan, 10);
+
+            // Eyes
+            fill(255, 0, 0);
+            ellipse(-4, -2, 2, 2);
+            ellipse(4, -2, 2, 2);
+
+            pop();
+        }
+
+        function resetEyeGame() {
+            eyeScore = 0;
+            eyeTargets = [];
+            document.getElementById('score').innerText = `Eye Score: ${eyeScore}`;
+        }
+
+        function runEyeGame() {
+            if (faceLandmarks) {
+                // Iris Landmarks (MediaPipe Face Mesh Iris are 468-472 for left, 473-477 for right)
+                // We'll use the left eye iris center (468) for targeting
+                let leftIris = faceLandmarks[468];
+                
+                // Mirror and Scale
+                let tx = (1 - leftIris.x) * width;
+                let ty = leftIris.y * height;
+                
+                // Smooth movement
+                eyeX = lerp(eyeX, tx, 0.2);
+                eyeY = lerp(eyeY, ty, 0.2);
+
+                // Draw Crosshair
+                stroke(255, 0, 0);
+                strokeWeight(2);
+                noFill();
+                ellipse(eyeX, eyeY, 40);
+                line(eyeX - 30, eyeY, eyeX + 30, eyeY);
+                line(eyeX, eyeY - 30, eyeX, eyeY + 30);
+                
+                // Spawn Targets
+                if (frameCount % 40 === 0) {
+                    eyeTargets.push({
+                        x: random(100, width - 100),
+                        y: random(100, height - 100),
+                        r: 50,
+                        life: 100
+                    });
+                }
+
+                // Update & Draw Targets
+                for (let i = eyeTargets.length - 1; i >= 0; i--) {
+                    let t = eyeTargets[i];
+                    t.life -= 1;
+                    
+                    let d = dist(eyeX, eyeY, t.x, t.y);
+                    if (d < t.r) {
+                        fill(255, 255, 0, 150);
+                        ellipse(t.x, t.y, t.r + 10);
+                        t.life -= 5; // Destroy faster when looking at it
+                    } else {
+                        fill(255, 0, 100, 150);
+                        ellipse(t.x, t.y, t.r);
+                    }
+
+                    if (t.life <= 0) {
+                        if (d < t.r) {
+                            eyeScore++;
+                            document.getElementById('score').innerText = `Eye Score: ${eyeScore}`;
+                        }
+                        eyeTargets.splice(i, 1);
+                    }
+                }
+            } else {
+                textAlign(CENTER);
+                fill(255);
+                textSize(20);
+                text("FACE NOT DETECTED", width / 2, height / 2);
+                textSize(14);
+                text("LOOK DIRECTLY AT THE CAMERA", width / 2, height / 2 + 30);
+            }
+        }
+
+        function resetGame() {
+            score = 0;
+            obstacles = [];
+            gameActive = true;
+            document.getElementById('score').innerText = `Score: ${score}`;
+        }
+
+        function runGame(hx, hy, gesture) {
+            fill(0, 255, 0);
+            noStroke();
+
+            // Player
+            playerY = lerp(playerY, hy, 0.2);
+            ellipse(150, playerY, 40);
+            fill(255, 255, 255, 50);
+            ellipse(150, playerY, 60);
+
+            if (gameActive) {
+                // Spawn obstacles
+                if (frameCount % 60 === 0) {
+                    obstacles.push({
+                        x: width,
+                        y: random(100, height - 100),
+                        w: 40,
+                        h: random(100, 300),
+                        speed: 5 + (score / 5)
+                    });
+                }
+
+                for (let i = obstacles.length - 1; i >= 0; i--) {
+                    let obs = obstacles[i];
+                    obs.x -= obs.speed;
+
+                    fill(255, 0, 100);
+                    rect(obs.x, obs.y, obs.w, obs.h, 10);
+
+                    // Collision
+                    if (150 + 20 > obs.x && 150 - 20 < obs.x + obs.w &&
+                        playerY + 20 > obs.y && playerY - 20 < obs.y + obs.h) {
+                        gameActive = false;
+                        if (score > highScore) highScore = score;
+                        document.getElementById('high-score').innerText = `High: ${highScore}`;
+                    }
+
+                    if (obs.x < -obs.w) {
+                        obstacles.splice(i, 1);
+                        score++;
+                        document.getElementById('score').innerText = `Score: ${score}`;
+                    }
+                }
+            } else {
+                textAlign(CENTER);
+                fill(255);
+                textSize(40);
+                text("GAME OVER", width / 2, height / 2);
+                textSize(20);
+                text("Make a FIST to Restart", width / 2, height / 2 + 50);
+
+                if (gesture.type === 'fist') resetGame();
+            }
+        }
+
+        function analyzeHand(lm) {
+            let isIndexUp = lm[8].y < lm[6].y;
+            let isMiddleUp = lm[12].y < lm[10].y;
+            let isRingUp = lm[16].y < lm[14].y;
+            let isPinkyUp = lm[20].y < lm[18].y;
+            let isThumbUp = dist(lm[4].x, lm[4].y, lm[17].x, lm[17].y) > 0.1; // Better thumb check
+
+            let upCount = [isIndexUp, isMiddleUp, isRingUp, isPinkyUp, isThumbUp].filter(Boolean).length;
+
+            if (upCount === 0) return { type: 'fist', val: 'Ahsan' };
+            if (isMiddleUp && !isIndexUp && !isRingUp && !isPinkyUp) return { type: 'middle', val: '😢' };
+
+            return { type: 'count', val: upCount };
+        }
+
+        function updateUI(gesture) {
+            const display = document.getElementById('display');
+            const status = document.getElementById('status');
+
+            if (gesture.type === 'count') {
+                display.innerText = gesture.val;
+                status.innerText = "COUNTING FINGERS";
+            }
+        }
+
+        class Particle {
+            constructor(i) {
+                this.pos = createVector(random(width), random(height));
+                this.vel = createVector(0, 0);
+                this.acc = createVector(0, 0);
+                this.color = color(0, 255, 150);
+                this.size = random(2, 6);
+            }
+            follow(tx, ty) {
+                let target = createVector(tx, ty);
+                let force = p5.Vector.sub(target, this.pos);
+                let d = force.mag();
+                force.setMag(map(d, 0, 100, 0, 10));
+                let steer = p5.Vector.sub(force, this.vel);
+                steer.limit(1);
+                this.acc.add(steer);
+            }
+            update() {
+                this.vel.add(this.acc);
+                this.pos.add(this.vel);
+                this.acc.mult(0);
+                this.vel.mult(0.92);
+            }
+            show(hide) {
+                if (hide) return;
+                noStroke();
+                fill(this.color);
+                ellipse(this.pos.x, this.pos.y, this.size);
+            }
+        }
+
+        function windowResized() { resizeCanvas(windowWidth, windowHeight); }
+    </script>
+</body>
+
+</html>
